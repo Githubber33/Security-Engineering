@@ -17,6 +17,11 @@ def get_user_input(): # Asks the user to select which type of scan the program n
     This function also asks which subnet, range or single IP the program needs to scan.
     After the input it shows a summary of what the user has put in the program. 
 
+    Parameters:
+        None
+
+    Returns:
+        scan_type, target_input, ports_input if invalid choice than None
     """
     print("Select type of scan: \n 1. Subnet (e.g. 192.168.1.0/24), \n 2. Range (e.g. 192.168.178.1-49), \n 3. Single (e.g. 192.168.178.5)")
     choice = input("Enter your choice (1-3): ") 
@@ -95,6 +100,12 @@ def ports(ports_input):
     - Single ports: "80"
     - Multiple: "80,443"
     - Range: "1-1000"
+
+    Parameters:
+        ports_input (str): Port string (e.g. "80,443" or "1-1000").
+
+    Returns:
+        list[int]: Sorted list of ports.
     """
 
     ports = set()
@@ -120,6 +131,15 @@ def discover_host(targets):
     If they do respond to the request, the function saves the IP and MAC address to a list.
     if everything is finished then the list of all the discoverd IP and MAC adresses gets returned. 
     
+    Parameters:
+        targets (list[str]): List of IP addresses.
+
+    Returns:
+        list[dict]: List of discovered hosts with IP and MAC address:
+            {
+                "ip": str,
+                "mac": str
+            }
     """
     # conf.iface = r"\Device\NPF_{5E41DDD6-DC7A-4940-9D5F-A907912736C5}" # Specify the interface in the brackets {} using its GUID
     arp = ARP(pdst=targets)
@@ -142,7 +162,17 @@ def discover_host(targets):
 
 def resolve_hostname(ip):
     """
-    This resolve_hostname() function 
+    Resolve a hostname (reverse DNS) for a given IP address.
+
+    This function performs a reverse DNS lookup using socket.gethostbyaddr().
+    If the hostname cannot be resolved (e.g., no PTR record, timeout, or other
+    lookup error), the function returns None.
+
+    Parameters:
+        ip (str): The IP address to resolve.
+
+    Returns:
+        str | None: The resolved hostname, or None if not available.
     """
     try:
         return socket.gethostbyaddr(ip)[0]
@@ -151,10 +181,15 @@ def resolve_hostname(ip):
 
 def os_detection(target):
     """
-    os_detection(target) is being used to detect the os. this function uses the nmap library with the -O argument.
+    os_detection(target) is being used to detect the os. this function uses the nmap with the -O argument.
     The target is the IP adress of the host that nmap wil scan for the OS and try to make a guess.
     When nmap will take a guess, the best match/guess will return. If there coulnt make a guess the function will return the error.
 
+    Parameters:
+        target (str): IP address.
+
+    Returns:
+        str: Detected OS name with accuracy or "Unknown".
     """
     nm = nmap.PortScanner()
     try:
@@ -177,6 +212,13 @@ def service_detection(ip, scanned_ports):
     """
     service_detection(ip, scanned_ports) wil detect the service based on the IP adress and port number.
     Nmap wil scan the host with the associated port with the -sV argument.
+
+    Parameters:
+        ip (str): IP address.
+        scanned_ports (list[int]): List of open ports.
+
+    Returns:
+        dict[int, str]: Mapping of port to service description.
     """
     nm = nmap.PortScanner()
     services = {}
@@ -209,7 +251,14 @@ def check_port(ip, port, timeout=0.2):
     """
     The check_port(ip, port, timeout=0.2) function will check if the port is open.
     It will achieve this by connecting with a socket. it will try to connect to it for 0.2s otherwise the port is closed.
-    
+
+    Parameters:
+        ip (str): IP address.
+        port (int): Port number.
+        timeout (float): Connection timeout in seconds.
+
+    Returns:
+        int or None: Port number if open, otherwise None. 
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
@@ -219,6 +268,21 @@ def check_port(ip, port, timeout=0.2):
         sock.close()
 
 def scan_open_ports(ip, port_list, workers=200, timeout=0.2):
+    """
+    Scan a list of TCP ports on a single host and return the open ones.
+
+    This function uses a ThreadPoolExecutor to check ports concurrently via
+    a simple TCP connect() attempt (see check_port()).
+
+    Parameters:
+        ip (str): Target host IP address.
+        port_list (list[int]): Ports to check.
+        workers (int): Maximum number of concurrent worker threads.
+        timeout (float): Socket timeout per port check in seconds.
+
+    Returns:
+        list[int]: Sorted list of open TCP ports.
+    """
     open_ports = []
     workers = min(workers, len(port_list)) if port_list else 0
     if workers == 0:
@@ -234,6 +298,29 @@ def scan_open_ports(ip, port_list, workers=200, timeout=0.2):
     return sorted(open_ports)
 
 def scan_one_host(host, port_list):
+    """
+    Scan a single discovered host for hostname, open ports, services, and OS.
+
+    Workflow:
+    - Extract IP/MAC from the discovery result
+    - Resolve hostname via reverse DNS
+    - Scan TCP ports using socket connect checks
+    - If open ports are found, run nmap service detection (-sV)
+    - Run nmap OS detection (-O --osscan-guess)
+
+    Parameters:
+        host (dict): Host data from discovery, expected keys: {"ip", "mac"}.
+        port_list (list[int]): Ports to scan on the host.
+
+    Returns:
+        dict: Structured scan result with keys:
+            - ip (str)
+            - mac (str)
+            - hostname (str)
+            - os (str)
+            - ports (list[dict]) each containing:
+                {"port": int, "protocol": "TCP", "service": str}
+    """
     ip = host["ip"]
     mac = host["mac"]
     hostname = resolve_hostname(ip) or "Not available"
@@ -259,6 +346,19 @@ def scan_one_host(host, port_list):
     
 
 def scan_host(discoverd_ip_mac, port_list, host_workers=5):
+    """
+    Scan multiple discovered hosts concurrently.
+
+    This function schedules scan_one_host() for each host using a thread pool.
+
+    Parameters:
+        discoverd_ip_mac (list[dict]): List of discovered hosts with "ip" and "mac".
+        port_list (list[int]): Ports to scan on each host.
+        host_workers (int): Maximum number of hosts to scan concurrently.
+
+    Returns:
+        list[dict]: A list of scan result dictionaries (one per host).
+    """
     scanned_hosts = []
     with ThreadPoolExecutor(max_workers=host_workers) as ex:
         futures = [ex.submit(scan_one_host, host, port_list) for host in discoverd_ip_mac]
@@ -267,6 +367,21 @@ def scan_host(discoverd_ip_mac, port_list, host_workers=5):
     return scanned_hosts
 
 def main():
+    """
+    Entry point of the network scanner.
+
+    Steps:
+    1) Ask user input: scan type, targets, ports
+    2) Confirm before starting
+    3) Build target IP list and port list
+    4) Discover hosts via ARP (local network)
+    5) For each discovered host:
+       - resolve hostname
+       - scan ports
+       - detect services (nmap -sV)
+       - detect OS (nmap -O)
+    6) Print results in a formatted table.
+    """
     scan_type, target_input, ports_input = get_user_input()
     confirm = input("\nPress ENTER to continue or type 'q' to quit: ")
     if confirm.lower() == "q":
@@ -286,6 +401,7 @@ def main():
 
     print("\nScanning the network:")
     scanned_hosts = scan_host(discovered_ip_mac, port_list)
+    scanned_hosts.sort(key=lambda h: ipaddress.ip_address(h["ip"]))
     table_data = []
     headers = ["IP", "MAC", "Hostname", "OS", "Port", "Service"]
     for host in scanned_hosts:
