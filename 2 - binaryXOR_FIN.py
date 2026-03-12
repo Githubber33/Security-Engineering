@@ -16,6 +16,11 @@ def fixed_length_xor(text, key):
     bytes
         binary XOR of text & key
     """
+    # There are multiple ways to do this, I chose this one because it is a clean one liner-
+    # requiring no additional imports. zip creates a list of tuples from arguments text and-
+    # key, iterates over each tuple via list comprehension and performs a binary XOR on-
+    # each element as it does so.
+
     xor_output = bytes([a ^ b for a, b in zip(text, key)])
 
     return xor_output
